@@ -38,12 +38,15 @@ import matplotlib.pyplot as plt
 import constopt
 from constopt.constraints import LinfBall
 from constopt.stochastic import PGD, PGDMadry, FrankWolfe, MomentumFrankWolfe
+import torch.optim as optim
+import torch.nn as nn
 
-sys.path.insert(0,r'./constopt-pytorch/')
-os.environ['LD_LIBRARY_PATH']='/root/.mujoco/mujoco210/bin:/usr/lib/nvidia'
-sys.path.insert(0,'./metaworld-master/')
+sys.path.insert(0, r'./constopt-pytorch/')
+os.environ['LD_LIBRARY_PATH'] = '/root/.mujoco/mujoco210/bin:/usr/lib/nvidia'
+sys.path.insert(0, './metaworld-master/')
 sys.path.append("./")
 sys.path.append("../..")
+
 
 class SingleWrapper(Wrapper):
     def __init__(self, env):
@@ -51,7 +54,7 @@ class SingleWrapper(Wrapper):
         self.action_space = env.action_space
         self.observation_space = env.observation_space
         self.train_mode = True
-        
+
     def reset(self):
         return self._env.reset()
 
@@ -70,6 +73,7 @@ class SingleWrapper(Wrapper):
 
     def test(self):
         self.train_mode = False
+
     def eval(self):
         self.train_mode = False
 
@@ -78,6 +82,7 @@ class SingleWrapper(Wrapper):
 
     def close(self):
         self._env.close()
+
 
 class Normalizer():
     def __init__(self, shape, clip=10.):
@@ -114,39 +119,41 @@ class Normalizer():
 
     def filt_torch(self, raw):
         return torch.clamp(
-            (raw - torch.Tensor(self._mean).to(raw.device)) / \
+            (raw - torch.Tensor(self._mean).to(raw.device)) /
             (torch.Tensor(np.sqrt(self._var) + 1e-4).to(raw.device)),
             -self.clip, self.clip)
 
- class RLAlgo():
+
+class RLAlgo():
     """
     Base RL Algorithm Framework
     """
+
     def __init__(self,
-        env = None,
-        replay_buffer = None,
-        collector = None,
-        logger = None,
-        continuous = None,
-        discount=0.99,
-        num_epochs = 3000,
-        epoch_frames = 200,
-        max_episode_frames = 999,
-        batch_size = 128,
-        device = 'cpu',
-        train_render = False,
-        eval_episodes = 1,
-        eval_render = False,
-        save_interval = 100,
-        save_dir = None
-    ):
+                 env=None,
+                 replay_buffer=None,
+                 collector=None,
+                 logger=None,
+                 continuous=None,
+                 discount=0.99,
+                 num_epochs=3000,
+                 epoch_frames=200,
+                 max_episode_frames=999,
+                 batch_size=128,
+                 device='cpu',
+                 train_render=False,
+                 eval_episodes=1,
+                 eval_render=False,
+                 save_interval=100,
+                 save_dir=None
+                 ):
 
         self.env = env
         self.total_frames = 0
         self.continuous = isinstance(self.env.action_space, gym.spaces.Box)
 
         self.replay_buffer = replay_buffer
-        self.collector = collector        
+        self.collector = collector
         # device specification
         self.device = device
 
@@ -167,15 +174,14 @@ class Normalizer():
         # Logger & relevant setting
         self.logger = logger
 
-        
         self.episode_rewards = deque(maxlen=30)
         self.training_episode_rewards = deque(maxlen=30)
         self.eval_episodes = eval_episodes
 
         self.save_interval = save_interval
         self.save_dir = save_dir
-        if not osp.exists( self.save_dir ):
-            os.mkdir( self.save_dir )
+        if not osp.exists(self.save_dir):
+            os.mkdir(self.save_dir)
 
         self.best_eval = None
 
@@ -187,22 +193,22 @@ class Normalizer():
 
     def pretrain(self):
         pass
-    
+
     def update_per_epoch(self):
         pass
 
     def snapshot(self, prefix, epoch):
         for name, network in self.snapshot_networks:
-            model_file_name="model_{}_{}.pth".format(name, epoch)
-            model_path=osp.join(prefix, model_file_name)
+            model_file_name = "model_{}_{}.pth".format(name, epoch)
+            model_path = osp.join(prefix, model_file_name)
             torch.save(network.state_dict(), model_path)
 
-    def train(self,epoch):
-        if epoch==1:
-        #    self.pf.load_state_dict(torch.load('/root/metaworld-master/newsoftmodule_24/model'+str(index)+'/model_pf_best.pth'))
+    def train(self, epoch):
+        if epoch == 1:
+            #    self.pf.load_state_dict(torch.load('/root/metaworld-master/newsoftmodule_24/model'+str(index)+'/model_pf_best.pth'))
          #   self.qf.load_state_dict(torch.load('/root/metaworld-master/newsoftmodule_24/model'+str(index)+'/model_qf_best.pth'))
           #  self.vf.load_state_dict(torch.load('/root/metaworld-master/newsoftmodule_24/model'+str(index)+'/model_vf_best.pth'))
-    
+
             self.pretrain()
             self.total_frames = 0
             if hasattr(self, "pretrain_frames"):
@@ -216,13 +222,13 @@ class Normalizer():
         self.start_epoch()
 
         explore_start_time = time.time()
-        training_epoch_info =  self.collector.train_one_epoch()
+        training_epoch_info = self.collector.train_one_epoch()
         for reward in training_epoch_info["train_rewards"]:
             self.training_episode_rewards.append(reward)
         explore_time = time.time() - explore_start_time
 
         train_start_time = time.time()
-        loss=self.update_per_epoch()
+        loss = self.update_per_epoch()
         train_time = time.time() - train_start_time
 
         finish_epoch_info = self.finish_epoch()
@@ -240,13 +246,13 @@ class Normalizer():
         # del eval_infos["eval_rewards"]
 
         if self.best_eval is None or \
-            np.mean(eval_infos["eval_rewards"]) > self.best_eval:
+                np.mean(eval_infos["eval_rewards"]) > self.best_eval:
             self.best_eval = np.mean(eval_infos["eval_rewards"])
             self.snapshot(self.save_dir, 'best')
         del eval_infos["eval_rewards"]
-        infos["eval_avg_success_rate"] =eval_infos["success"]
+        infos["eval_avg_success_rate"] = eval_infos["success"]
         infos["Running_Average_Rewards"] = np.mean(self.episode_rewards)
-        infos["Running_success_rate"] =training_epoch_info["train_success_rate"]
+        infos["Running_success_rate"] = training_epoch_info["train_success_rate"]
         infos["Train_Epoch_Reward"] = training_epoch_info["train_epoch_reward"]
         infos["Running_Training_Average_Rewards"] = np.mean(
             self.training_episode_rewards)
@@ -257,14 +263,15 @@ class Normalizer():
         infos.update(finish_epoch_info)
 
         self.logger.add_epoch_info(epoch, self.total_frames,
-            time.time() - start, infos )
+                                   time.time() - start, infos)
 
         if epoch % self.save_interval == 0:
             self.snapshot(self.save_dir, epoch)
-        if epoch==self.num_epochs-1:
+        if epoch == self.num_epochs-1:
             self.snapshot(self.save_dir, "finish")
             self.collector.terminate()
         return loss
+
     def update(self, batch):
         raise NotImplementedError
 
@@ -281,7 +288,7 @@ class Normalizer():
     def networks(self):
         return [
         ]
-    
+
     @property
     def snapshot_networks(self):
         return [
@@ -291,33 +298,35 @@ class Normalizer():
     def target_networks(self):
         return [
         ]
-    
+
     def to(self, device):
         for net in self.networks:
             net.to(device)
+
 
 class OffRLAlgo(RLAlgo):
     """
     Base RL Algorithm Framework
     """
+
     def __init__(self,
 
-        pretrain_epochs=0,
+                 pretrain_epochs=0,
 
-        min_pool = 0,
+                 min_pool=0,
 
-        target_hard_update_period = 1000,
-        use_soft_update = True,
-        tau = 0.001,
-        opt_times = 1,
+                 target_hard_update_period=1000,
+                 use_soft_update=True,
+                 tau=0.001,
+                 opt_times=1,
 
-        **kwargs
-    ):
+                 **kwargs
+                 ):
         super(OffRLAlgo, self).__init__(**kwargs)
 
         # environment relevant information
         self.pretrain_epochs = pretrain_epochs
-        
+
         # target_network update information
         self.target_hard_update_period = target_hard_update_period
         self.use_soft_update = use_soft_update
@@ -327,69 +336,76 @@ class OffRLAlgo(RLAlgo):
         self.opt_times = opt_times
         self.min_pool = min_pool
 
-        self.sample_key = [ "obs", "next_obs", "acts", "rewards", "terminals" ]
+        self.sample_key = ["obs", "next_obs", "acts", "rewards", "terminals"]
 
     def update_per_timestep(self):
-        if self.replay_buffer.num_steps_can_sample() > max( self.min_pool, self.batch_size ):
-            for _ in range( self.opt_times ):
-                batch = self.replay_buffer.random_batch(self.batch_size, self.sample_key)
-                infos = self.update( batch )
-                self.logger.add_update_info( infos )
+        if self.replay_buffer.num_steps_can_sample() > max(self.min_pool, self.batch_size):
+            for _ in range(self.opt_times):
+                batch = self.replay_buffer.random_batch(
+                    self.batch_size, self.sample_key)
+                infos = self.update(batch)
+                self.logger.add_update_info(infos)
 
     def update_per_epoch(self):
-        loss=[]
-        for _ in range( self.opt_times ):
-            batch = self.replay_buffer.random_batch(self.batch_size, self.sample_key)
-            infos = self.update( batch )
+        loss = []
+        for _ in range(self.opt_times):
+            batch = self.replay_buffer.random_batch(
+                self.batch_size, self.sample_key)
+            infos = self.update(batch)
             loss.append(infos['Training/policy_loss'])
-            self.logger.add_update_info( infos )
+            self.logger.add_update_info(infos)
         return np.mean(loss)
+
     def pretrain(self):
         total_frames = 0
         self.pretrain_epochs * self.collector.worker_nums * self.epoch_frames
-        
-        for pretrain_epoch in range( self.pretrain_epochs ):
+
+        for pretrain_epoch in range(self.pretrain_epochs):
 
             start = time.time()
 
             self.start_epoch()
-            
-            training_epoch_info =  self.collector.train_one_epoch()
+
+            training_epoch_info = self.collector.train_one_epoch()
             for reward in training_epoch_info["train_rewards"]:
                 self.training_episode_rewards.append(reward)
 
             finish_epoch_info = self.finish_epoch()
 
             total_frames += self.collector.active_worker_nums * self.epoch_frames
-            
+
             infos = {}
-            
+
             infos["Train_Epoch_Reward"] = training_epoch_info["train_epoch_reward"]
-            infos["Running_Training_Average_Rewards"] = np.mean(self.training_episode_rewards)
+            infos["Running_Training_Average_Rewards"] = np.mean(
+                self.training_episode_rewards)
             infos.update(finish_epoch_info)
-            
-            self.logger.add_epoch_info(pretrain_epoch, total_frames, time.time() - start, infos, csv_write=False )
-        
+
+            self.logger.add_epoch_info(
+                pretrain_epoch, total_frames, time.time() - start, infos, csv_write=False)
+
         self.pretrain_frames = total_frames
 
         self.logger.log("Finished Pretrain")
+
 
 class SAC(OffRLAlgo):
     """
     SAC
     """
+
     def __init__(
             self,
             pf, vf, qf,
-            plr,vlr,qlr,
+            plr, vlr, qlr,
             optimizer_class=optim.Adam,
-            
+
             policy_std_reg_weight=1e-3,
             policy_mean_reg_weight=1e-3,
 
-            reparameterization = True,
-            automatic_entropy_tuning = True,
-            target_entropy = None,
+            reparameterization=True,
+            automatic_entropy_tuning=True,
+            target_entropy=None,
             **kwargs
     ):
         super(SAC, self).__init__(**kwargs)
@@ -417,13 +433,14 @@ class SAC(OffRLAlgo):
             self.pf.parameters(),
             lr=self.plr,
         )
-        
+
         self.automatic_entropy_tuning = automatic_entropy_tuning
         if self.automatic_entropy_tuning:
             if target_entropy:
                 self.target_entropy = target_entropy
             else:
-                self.target_entropy = -np.prod(self.env.action_space.shape).item()  # from rlkit
+                self.target_entropy = - \
+                    np.prod(self.env.action_space.shape).item()  # from rlkit
             self.log_alpha = torch.zeros(1).to(self.device)
             self.log_alpha.requires_grad_()
             self.alpha_optimizer = optimizer_class(
@@ -441,29 +458,29 @@ class SAC(OffRLAlgo):
 
     def update(self, batch):
         self.training_update_num += 1
-        
+
         obs = batch['obs']
         actions = batch['acts']
         next_obs = batch['next_obs']
         rewards = batch['rewards']
         terminals = batch['terminals']
 
-        rewards = torch.Tensor(rewards).to( self.device )
-        terminals = torch.Tensor(terminals).to( self.device )
-        obs = torch.Tensor(obs).to( self.device )
-        actions = torch.Tensor(actions).to( self.device )
-        next_obs = torch.Tensor(next_obs).to( self.device )
+        rewards = torch.Tensor(rewards).to(self.device)
+        terminals = torch.Tensor(terminals).to(self.device)
+        obs = torch.Tensor(obs).to(self.device)
+        actions = torch.Tensor(actions).to(self.device)
+        next_obs = torch.Tensor(next_obs).to(self.device)
 
         """
         Policy operations.
         """
-        sample_info = self.pf.explore(obs, return_log_probs=True )
+        sample_info = self.pf.explore(obs, return_log_probs=True)
 
-        mean        = sample_info["mean"]
-        log_std     = sample_info["log_std"]
+        mean = sample_info["mean"]
+        log_std = sample_info["log_std"]
         new_actions = sample_info["action"]
-        log_probs   = sample_info["log_prob"]
-        ent         = sample_info["ent"]
+        log_probs = sample_info["log_prob"]
+        ent = sample_info["ent"]
 
         q_pred = self.qf([obs, actions])
         v_pred = self.vf(obs)
@@ -472,7 +489,8 @@ class SAC(OffRLAlgo):
             """
             Alpha Loss
             """
-            alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+            alpha_loss = -(self.log_alpha * (log_probs +
+                           self.target_entropy).detach()).mean()
             self.alpha_optimizer.zero_grad()
             alpha_loss.backward()
             self.alpha_optimizer.step()
@@ -486,14 +504,14 @@ class SAC(OffRLAlgo):
         """
         target_v_values = self.target_vf(next_obs)
         q_target = rewards + (1. - terminals) * self.discount * target_v_values
-        qf_loss = self.qf_criterion( q_pred, q_target.detach())
+        qf_loss = self.qf_criterion(q_pred, q_target.detach())
 
         """
         VF Loss
         """
         q_new_actions = self.qf([obs, new_actions])
         v_target = q_new_actions - alpha * log_probs
-        vf_loss = self.vf_criterion( v_pred, v_target.detach())
+        vf_loss = self.vf_criterion(v_pred, v_target.detach())
 
         """
         Policy Loss
@@ -501,39 +519,40 @@ class SAC(OffRLAlgo):
         if not self.reparameterization:
             log_policy_target = q_new_actions - v_pred
             policy_loss = (
-                log_probs * ( alpha * log_probs - log_policy_target).detach()
+                log_probs * (alpha * log_probs - log_policy_target).detach()
             ).mean()
         else:
-            policy_loss = ( alpha * log_probs - q_new_actions).mean()
+            policy_loss = (alpha * log_probs - q_new_actions).mean()
 
         std_reg_loss = self.policy_std_reg_weight * (log_std**2).mean()
         mean_reg_loss = self.policy_mean_reg_weight * (mean**2).mean()
 
         policy_loss += std_reg_loss + mean_reg_loss
-        
+
         """
         Update Networks
         """
         self.pf_optimizer.zero_grad()
-        
-        w=[]
+
+        w = []
         for key in pfs[0].state_dict().keys():
-            w.append(torch.cat([pfs[j].state_dict()[key].unsqueeze(0) for j in range(len(envs))]))            
-        
+            w.append(torch.cat([pfs[j].state_dict()[key].unsqueeze(0)
+                     for j in range(len(envs))]))
+
         rloss[index] = policy_loss.clone().detach().item()
         if multitask:
-            pre=rloss[index]+lossw(currindex,index,rloss,w,B)/10   
+            pre = rloss[index]+lossw(currindex, index, rloss, w, B)/10
         else:
-            pre=rloss[index]
+            pre = rloss[index]
         # compute gradients
 
         pre.backward()
 
         # train the NN
-    
+
         self.pf_optimizer.step()
-        rloss[index]=rloss[index].detach().item()
-        
+        rloss[index] = rloss[index].detach().item()
+
         self.qf_optimizer.zero_grad()
         qf_loss.backward()
         self.qf_optimizer.step()
@@ -580,7 +599,7 @@ class SAC(OffRLAlgo):
             self.vf,
             self.target_vf
         ]
-    
+
     @property
     def snapshot_networks(self):
         return [
@@ -592,25 +611,27 @@ class SAC(OffRLAlgo):
     @property
     def target_networks(self):
         return [
-            ( self.vf, self.target_vf )
+            (self.vf, self.target_vf)
         ]
 
- class parser:
-    def __init__(self): 
-        self.config='config/sac_ant.json'
-        self.id='mt10'
-        self.worker_nums=10
-        self.eval_worker_nums=10
-        self.seed=20
-        self.vec_env_nums=1
-        self.save_dir='./save/sac_ant'
-        self.log_dir='./log/sac_ant'
-        self.no_cuda=True
-        self.overwrite=True
-        self.device='cpu'
-        self.cuda=False     
-        
-text="""{
+
+class parser:
+    def __init__(self):
+        self.config = 'config/sac_ant.json'
+        self.id = 'mt10'
+        self.worker_nums = 10
+        self.eval_worker_nums = 10
+        self.seed = 20
+        self.vec_env_nums = 1
+        self.save_dir = './save/sac_ant'
+        self.log_dir = './log/sac_ant'
+        self.no_cuda = True
+        self.overwrite = True
+        self.device = 'cpu'
+        self.cuda = False
+
+
+text = """{
     "env_name" : "mt10",
     "env":{
         "reward_scale":1,
@@ -647,20 +668,20 @@ text="""{
     }
 }"""
 
-ml10 = metaworld.MT10() # Construct the benchmark, sampling tasks
+ml10 = metaworld.MT10()  # Construct the benchmark, sampling tasks
 envs = []
 for name, env_cls in ml10.train_classes.items():
-  env = env_cls()
-  task = random.choice([task for task in ml10.train_tasks
-                        if task.env_name  ==   name])
-  env.set_task(task)
-  envs.append(env)
+    env = env_cls()
+    task = random.choice([task for task in ml10.train_tasks
+                          if task.env_name == name])
+    env.set_task(task)
+    envs.append(env)
 
-!mkdir config
-with open('config/sac_ant.json','w') as f:
+# !mkdir config
+with open('config/sac_ant.json', 'w') as f:
     f.write(text)
-                  
-args=parser()
+
+args = parser()
 params = get_params(args.config)
 device = torch.device(
     "cuda:{}".format(args.device) if args.cuda else "cpu")
@@ -673,7 +694,7 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 random.seed(args.seed)
 
-normalizer=Normalizer(env.observation_space.shape)      
+normalizer = Normalizer(env.observation_space.shape)
 buffer_param = params['replay_buffer']
 experiment_name = os.path.split(
     os.path.splitext(args.config)[0])[-1] if args.id is None \
@@ -681,31 +702,31 @@ experiment_name = os.path.split(
 logger = Logger(
     experiment_name, params['env_name'], args.seed, params, args.log_dir)
 
-pfs=[]
-qf1s=[]
-vfs=[]
-agents=[]
-epochs=[1 for i in range(len(envs))]
+pfs = []
+qf1s = []
+vfs = []
+agents = []
+epochs = [1 for i in range(len(envs))]
 for index in range(len(envs)):
     print(index)
-    env=SingleWrapper(envs[index])
+    env = SingleWrapper(envs[index])
     params = get_params(args.config)
-    params['general_setting']['logger'] =  Logger(
-            'mt10', str(index), args.seed, params, './log/mt10_'+str(index)+'/')
-    params['env_name']=str(index)
+    params['general_setting']['logger'] = Logger(
+        'mt10', str(index), args.seed, params, './log/mt10_'+str(index)+'/')
+    params['env_name'] = str(index)
     params['general_setting']['env'] = env
 
     replay_buffer = BaseReplayBuffer(
-        max_replay_buffer_size=int(buffer_param['size'])#,
-    #    time_limit_filter=buffer_param['time_limit_filter']
+        max_replay_buffer_size=int(buffer_param['size'])  # ,
+        #    time_limit_filter=buffer_param['time_limit_filter']
     )
     params['general_setting']['replay_buffer'] = replay_buffer
     params['general_setting']['device'] = device
     params['net']['base_type'] = networks.MLPBase
     params['net']['activation_func'] = torch.nn.ReLU
-    
+
     pf = policies.GuassianContPolicy(
-        input_shape=env.observation_space.shape[0], 
+        input_shape=env.observation_space.shape[0],
         output_shape=2 * env.action_space.shape[0],
         **params['net'],
         **params['sac'])
@@ -716,10 +737,10 @@ for index in range(len(envs)):
         **params['net'])
 
     vf = networks.Net(
-            input_shape=env.observation_space.shape,
-            output_shape=1,
-            **params['net']
-        )
+        input_shape=env.observation_space.shape,
+        output_shape=1,
+        **params['net']
+    )
     pfs.append(pf)
     qf1s.append(qf1)
     vfs.append(vf)
@@ -731,99 +752,127 @@ for index in range(len(envs)):
     params['general_setting']['save_dir'] = osp.join(
         './log/', "model10_"+str(index))
     agent = SAC(
-            pf=pf,
-            qf=qf1,plr=3e-4,vlr=3e-4,qlr=3e-4,
-            vf=vf,
-            **params["sac"],
-            **params["general_setting"]
-        )
-    agents.append(agent)     
+        pf=pf,
+        qf=qf1, plr=3e-4, vlr=3e-4, qlr=3e-4,
+        vf=vf,
+        **params["sac"],
+        **params["general_setting"]
+    )
+    agents.append(agent)
 
 # If we do not save prior information in advance, we could delete priors and term2.
-priors = np.load('priors.npy')
-# differentiable ranking loss
-def pss(x,points):
-    def pss0(x,i):
-        return torch.tanh(200*torch.tensor(x-i))/2+0.5
-    return len(points)-sum([pss0(x,i) for i in points])
+# priors = np.load('priors.npy')
 
-def losst(currindex,t,rloss,w,B,mu=0.2,lamb=[0.01,0.01,0.01],U=[13],pi=list(range(len(envs)))):
-    new_rloss=[i for i in rloss]
-    new_rloss[t]=new_rloss[t]+1
-    rlossRank=1+len(envs)-rankdata(new_rloss, method='min')
-    points=B[t]
-    sim=[sum(nn.CosineSimilarity()(pfs[t].state_dict()['last.weight'].view(-1,1),pfs[i].state_dict()['last.weight'].view(-1,1))) for i in range(len(envs))] 
-    sim[t]=sim[t]+100
-    rlossRank2=1+len(envs)-rankdata(sim, method='min')
-    term0=(1+mu*sum([torch.norm(torch.tensor(B[t][i]),p=1)for i in set(list(range(len(envs))))-set([t])]))*rloss[t]
-    term1=sum([sum([sum([torch.norm(w[i][s]-sum([B[pi[j]][s]*w[i][pi[j]] for j in range(currindex-1)])-B[t][s]*w[i][t],p=2)**2]) for i in range(len(pfs[0].state_dict().keys()))]) for s in U])
-    term2=torch.norm(torch.tensor(priors[current])-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
-    term3=torch.norm(torch.tensor(rlossRank)-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
-    term4=torch.norm(torch.tensor(rlossRank2)-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
+# differentiable ranking loss
+def pss(x, points):
+    def pss0(x, i):
+        return torch.tanh(200*torch.tensor(x-i))/2+0.5
+    return len(points)-sum([pss0(x, i) for i in points])
+
+
+def losst(currindex, t, rloss, w, B, mu=0.2, lamb=[0.01, 0.01, 0.01], U=[13], pi=list(range(len(envs)))):
+    new_rloss = [i for i in rloss]
+    new_rloss[t] = new_rloss[t]+1
+    rlossRank = 1+len(envs)-rankdata(new_rloss, method='min')
+    points = B[t]
+    sim = [sum(nn.CosineSimilarity()(pfs[t].state_dict()['last.weight'].view(-1, 1),
+               pfs[i].state_dict()['last.weight'].view(-1, 1))) for i in range(len(envs))]
+    sim[t] = sim[t]+100
+    rlossRank2 = 1+len(envs)-rankdata(sim, method='min')
+    term0 = (1+mu*sum([torch.norm(torch.tensor(B[t][i]), p=1)
+             for i in set(list(range(len(envs))))-set([t])]))*rloss[t]
+    term1 = sum([sum([sum([torch.norm(w[i][s]-sum([B[pi[j]][s]*w[i][pi[j]] for j in range(currindex-1)]) -
+                B[t][s]*w[i][t], p=2)**2]) for i in range(len(pfs[0].state_dict().keys()))]) for s in U])
+    # term2 = torch.norm(torch.tensor(
+    #     priors[current])-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
+    term3 = torch.norm(torch.tensor(
+        rlossRank)-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
+    term4 = torch.norm(torch.tensor(
+        rlossRank2)-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
     terms_history[0].append(term0.detach().numpy())
     terms_history[1].append(term1)
-    terms_history[2].append(term2.detach().numpy())
+    # terms_history[2].append(term2.detach().numpy())
     terms_history[3].append(term3.detach().numpy())
     terms_history[4].append(term4.detach().numpy())
-    if len(terms_history[0])<=1:
-        return term0+term1+term2+term3+term4
+    if len(terms_history[0]) <= 1:
+        return term0+term1+term3+term4
     else:
         return (1/(np.array(terms_history[0]).std())**2)*term0+(1/(np.array(terms_history[1]).std())**2)*term1+(1/(np.array(terms_history[3]).std())**2)*term3+(1/(np.array(terms_history[4]).std())**2)*term4+np.log((np.array(terms_history[0]).std())*(np.array(terms_history[1]).std())*(np.array(terms_history[2]).std())*(np.array(terms_history[3]).std())*(np.array(terms_history[4]).std()))
 
-def lossb(currindex,t,rloss,w,B,mu=0.2,lamb=[0.01,0.01,0.01],U=[13],pi=list(range(len(envs)))):
-    new_rloss=[i for i in rloss]
-    new_rloss[t]=new_rloss[t]+1
-    rlossRank=1+len(envs)-rankdata(new_rloss, method='min')
-    points=B[t]
-    sim=[sum(nn.CosineSimilarity()(pfs[t].state_dict()['last.weight'].view(-1,1),pfs[i].state_dict()['last.weight'].view(-1,1))) for i in range(len(envs))] 
-    sim[t]=sim[t]+100
-    rlossRank2=1+len(envs)-rankdata(sim, method='min')
-    term0=(1+mu*sum([torch.norm(B[t][i],p=1)for i in set(list(range(len(envs))))-set([t])]))*rloss[t]
-    term1=sum([sum([sum([torch.norm(w[i][s]-sum([B[pi[j]][s]*w[i][pi[j]] for j in range(currindex-1)])-B[t][s]*w[i][t],p=2)**2]) for i in range(len(pfs[0].state_dict().keys()))]) for s in U])
-    term2=torch.norm(torch.tensor(priors[current])-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
-    term3=torch.norm(torch.tensor(rlossRank)-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
-    term4=torch.norm(torch.tensor(rlossRank2)-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
 
-    if len(terms_history[0])<=1:
-        return term0+term1+term2+term3+term4
+def lossb(currindex, t, rloss, w, B, mu=0.2, lamb=[0.01, 0.01, 0.01], U=[13], pi=list(range(len(envs)))):
+    new_rloss = [i for i in rloss]
+    new_rloss[t] = new_rloss[t]+1
+    rlossRank = 1+len(envs)-rankdata(new_rloss, method='min')
+    points = B[t]
+    sim = [sum(nn.CosineSimilarity()(pfs[t].state_dict()['last.weight'].view(-1, 1),
+               pfs[i].state_dict()['last.weight'].view(-1, 1))) for i in range(len(envs))]
+    sim[t] = sim[t]+100
+    rlossRank2 = 1+len(envs)-rankdata(sim, method='min')
+    term0 = (1+mu*sum([torch.norm(B[t][i], p=1)
+             for i in set(list(range(len(envs))))-set([t])]))*rloss[t]
+    term1 = sum([sum([sum([torch.norm(w[i][s]-sum([B[pi[j]][s]*w[i][pi[j]] for j in range(currindex-1)]) -
+                B[t][s]*w[i][t], p=2)**2]) for i in range(len(pfs[0].state_dict().keys()))]) for s in U])
+    # term2 = torch.norm(torch.tensor(
+    #     priors[current])-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
+    term3 = torch.norm(torch.tensor(
+        rlossRank)-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
+    term4 = torch.norm(torch.tensor(
+        rlossRank2)-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
+
+    if len(terms_history[0]) <= 1:
+        return term0+term1+term3+term4
     else:
         return (1/(np.array(terms_history[0]).std())**2)*term0+(1/(np.array(terms_history[1]).std())**2)*term1+(1/(np.array(terms_history[3]).std())**2)*term3+(1/(np.array(terms_history[4]).std())**2)*term4+np.log((np.array(terms_history[0]).std())*(np.array(terms_history[1]).std())*(np.array(terms_history[2]).std())*(np.array(terms_history[3]).std())*(np.array(terms_history[4]).std()))
 
-def lossw(currindex,t,rloss,w,B,mu=0.2,lamb=[0.01,0.01,0.01],U=[13],pi=list(range(len(envs)))):
-    new_rloss=[i for i in rloss]
-    new_rloss[t]=new_rloss[t]+1
-    rlossRank=1+len(envs)-rankdata(new_rloss, method='min')
-    points=B[t]
-    term0=(1+mu*sum([torch.norm(torch.tensor(B[t][i]),p=1)for i in set(list(range(len(envs))))-set([t])]))*rloss[t]
-    sim=[sum(nn.CosineSimilarity()(pfs[t].state_dict()['last.weight'].view(-1,1),pfs[i].state_dict()['last.weight'].view(-1,1))) for i in range(len(envs))] 
-    sim[t]=sim[t]+100
-    rlossRank2=1+len(envs)-rankdata(sim, method='min')
 
-    term1=sum([sum([torch.norm(w[i][t]-sum([B[pi[j]][t]*w[i][pi[j]] for j in range(currindex-1)]),p=2)**2]) for i in range(len(pfs[0].state_dict().keys()))])
-    term2=torch.norm(torch.tensor(priors[current])-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
-    term3=torch.norm(torch.tensor(rlossRank)-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
-    term4=torch.norm(torch.tensor(rlossRank2)-torch.tensor([pss(torch.tensor(i-0.01),points) for i in points]))**2
-    if len(terms_history[0])<=1:
-        return term0+term1+term2+term3+term4
+def lossw(currindex, t, rloss, w, B, mu=0.2, lamb=[0.01, 0.01, 0.01], U=[13], pi=list(range(len(envs)))):
+    new_rloss = [i for i in rloss]
+    new_rloss[t] = new_rloss[t]+1
+    rlossRank = 1+len(envs)-rankdata(new_rloss, method='min')
+    points = B[t]
+    term0 = (1+mu*sum([torch.norm(torch.tensor(B[t][i]), p=1)
+             for i in set(list(range(len(envs))))-set([t])]))*rloss[t]
+    sim = [sum(nn.CosineSimilarity()(pfs[t].state_dict()['last.weight'].view(-1, 1),
+               pfs[i].state_dict()['last.weight'].view(-1, 1))) for i in range(len(envs))]
+    sim[t] = sim[t]+100
+    rlossRank2 = 1+len(envs)-rankdata(sim, method='min')
+
+    term1 = sum([sum([torch.norm(w[i][t]-sum([B[pi[j]][t]*w[i][pi[j]] for j in range(currindex-1)]), p=2)**2])
+                for i in range(len(pfs[0].state_dict().keys()))])
+    # term2 = torch.norm(torch.tensor(
+    #     priors[current])-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
+    term3 = torch.norm(torch.tensor(
+        rlossRank)-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
+    term4 = torch.norm(torch.tensor(
+        rlossRank2)-torch.tensor([pss(torch.tensor(i-0.01), points) for i in points]))**2
+    if len(terms_history[0]) <= 1:
+        return term0+term1+term3+term4
     else:
         return (1/(np.array(terms_history[0]).std())**2)*term0+(1/(np.array(terms_history[1]).std())**2)*term1+(1/(np.array(terms_history[3]).std())**2)*term3+(1/(np.array(terms_history[4]).std())**2)*term4+np.log((np.array(terms_history[0]).std())*(np.array(terms_history[1]).std())*(np.array(terms_history[2]).std())*(np.array(terms_history[3]).std())*(np.array(terms_history[4]).std()))
 
-#FrankWolfe
-OPTIMIZER_CLASSES = [FrankWolfe]# [PGD, PGDMadry, FrankWolfe, MomentumFrankWolfe]
-radius=0.05
+
+# FrankWolfe
+# [PGD, PGDMadry, FrankWolfe, MomentumFrankWolfe]
+OPTIMIZER_CLASSES = [FrankWolfe]
+radius = 0.05
+
 
 def setup_problem(make_nonconvex=False):
     radius2 = radius
-    loss_func=lossb
+    loss_func = lossb
     constraint = LinfBall(radius2)
     return loss_func, constraint
 
+
 def optimize(loss_func, constraint, optimizer_class, iterations=100):
     for i in range(len(envs)):
-        if i!=t:
-            B[t][i] =torch.tensor(B[t][i],requires_grad=True)
-    optimizer = [optimizer_class([B[t][i]], constraint) for i in set(list(range(len(envs))))-set([t])]
-    iterates = [[B[t][i].data if i!=t else B[t][i] for i in range(len(envs))]]
+        if i != t:
+            B[t][i] = torch.tensor(B[t][i], requires_grad=True)
+    optimizer = [optimizer_class([B[t][i]], constraint)
+                 for i in set(list(range(len(envs))))-set([t])]
+    iterates = [[B[t][i].data if i != t else B[t][i]
+                 for i in range(len(envs))]]
     losses = []
     # Use Madry's heuristic for step size
     step_size = {
@@ -835,68 +884,78 @@ def optimize(loss_func, constraint, optimizer_class, iterations=100):
     for _ in range(iterations):
         for i in range(len(envs)-1):
             optimizer[i].zero_grad()
-        loss = loss_func(currindex,t,rloss,w,B,U=list(set(U)-set(list([t]))))
+        loss = loss_func(currindex, t, rloss, w, B,
+                         U=list(set(U)-set(list([t]))))
         loss.backward(retain_graph=True)
-        for i in  range(len(envs)-1):
+        for i in range(len(envs)-1):
             optimizer[i].step(step_size[optimizer[i].name])
         for i in set(list(range(len(envs))))-set([t]):
-            B[t][i].data.clamp_(0,100)
+            B[t][i].data.clamp_(0, 100)
         losses.append(loss)
-        iterates.append([B[t][i].data if i!=t else B[t][i] for i in range(len(envs))])
-    loss = loss_func(currindex,t,rloss,w,B,U=list(set(U)-set(list([t])))).detach()
+        iterates.append([B[t][i].data if i != t else B[t][i]
+                        for i in range(len(envs))])
+    loss = loss_func(currindex, t, rloss, w, B,
+                     U=list(set(U)-set(list([t])))).detach()
     losses.append(loss)
-    B[t]=[B[t][i].data if i!=t else B[t][i] for i in range(len(envs))]
+    B[t] = [B[t][i].data if i != t else B[t][i] for i in range(len(envs))]
     return losses, iterates
 
-multitask=False
-mu,lamb=0.01,[0.01,0.01,0.01]#para[0],[para[1],para[2],para[3]]
-terms_history=[[]]*5
-rloss=[0.0 for i in range(len(envs))]
-rewardsRec=[[] for i in range(len(envs))]
-rewardsRec_nor=[[0] for i in range(len(envs))]
-succeessRec=[[] for i in range(len(envs))]
-B=[list(i) for i in np.diag(np.ones(len(envs)))]
-TotalLossRec=[] 
-TotalLossRec_withoutnormalization=[]
-indexVlist=[]
+
+multitask = False
+mu, lamb = 0.01, [0.01, 0.01, 0.01]  # para[0],[para[1],para[2],para[3]]
+terms_history = [[]]*5
+rloss = [0.0 for i in range(len(envs))]
+rewardsRec = [[] for i in range(len(envs))]
+rewardsRec_nor = [[0] for i in range(len(envs))]
+succeessRec = [[] for i in range(len(envs))]
+B = [list(i) for i in np.diag(np.ones(len(envs)))]
+TotalLossRec = []
+TotalLossRec_withoutnormalization = []
+indexVlist = []
 
 for i_episode in range(10):
     for index, env in enumerate(envs):
-            agents[index].train(epochs[index])
-            epochs[index]+=1
-    rlosscopy=rloss.copy()
+        agents[index].train(epochs[index])
+        epochs[index] += 1
+    rlosscopy = rloss.copy()
     TotalLossRec_withoutnormalization.append(rlosscopy)
     if TotalLossRec:
-            TotalLossRec.append((rlosscopy-np.array(TotalLossRec_withoutnormalization).mean(axis=0))/(1e-5+np.array(TotalLossRec_withoutnormalization).std(axis=0)))
+        TotalLossRec.append((rlosscopy-np.array(TotalLossRec_withoutnormalization).mean(
+            axis=0))/(1e-5+np.array(TotalLossRec_withoutnormalization).std(axis=0)))
     else:
-            TotalLossRec.append(rlosscopy)
+        TotalLossRec.append(rlosscopy)
 
-for i_episode in range(10,10000):
-    rlosscopy=rloss.copy()
-    low=np.array(rlosscopy).mean()-2*np.array(rlosscopy).std()
-    high=np.array(rlosscopy).mean()+2*np.array(rlosscopy).std()
-    indexV=sum(np.array(rlosscopy)<low)/len(envs)/3+sum(np.array(rlosscopy)>high)/len(envs)/3+np.exp(-i_episode/1000)/3+np.exp(-np.array(TotalLossRec[-1]).mean()/40)/3
-    indexVlist.append([indexV,sum(np.array(rlosscopy)<low)/len(envs)/3+sum(np.array(rlosscopy)>high)/len(envs)/3,np.exp(-i_episode/1000)/3,np.exp(-np.array(TotalLossRec[-1]).mean()/40)/3])
+for i_episode in range(10, 10000):
+    rlosscopy = rloss.copy()
+    low = np.array(rlosscopy).mean()-2*np.array(rlosscopy).std()
+    high = np.array(rlosscopy).mean()+2*np.array(rlosscopy).std()
+    indexV = sum(np.array(rlosscopy) < low)/len(envs)/3+sum(np.array(rlosscopy) > high) / \
+        len(envs)/3+np.exp(-i_episode/1000)/3 + \
+        np.exp(-np.array(TotalLossRec[-1]).mean()/40)/3
+    indexVlist.append([indexV, sum(np.array(rlosscopy) < low)/len(envs)/3+sum(np.array(rlosscopy) >
+                      high)/len(envs)/3, np.exp(-i_episode/1000)/3, np.exp(-np.array(TotalLossRec[-1]).mean()/40)/3])
 
-    if np.random.random()<indexV:
-        multitask=True
+    if np.random.random() < indexV:
+        multitask = True
         p = np.random.random()
         # roll = np.random.randint(2)
         length = 0
-        w=[]
+        w = []
         for key in pfs[0].state_dict().keys():
-            w.append(torch.cat([pfs[j].state_dict()[key].unsqueeze(0) for j in range(len(envs))]))            
+            w.append(torch.cat([pfs[j].state_dict()[key].unsqueeze(0)
+                     for j in range(len(envs))]))
 
-        U=list(range(len(envs)))
-        pi=[0 for i in range(len(envs))]
+        U = list(range(len(envs)))
+        pi = [0 for i in range(len(envs))]
         for currindex in range(len(envs)):
-            indexdict={}
+            indexdict = {}
             for t in U:
-                indexdict[losst(currindex,t,torch.tensor(rloss),w,B,mu=mu,lamb=lamb,U=list(set(U)-set(list([t])))).item()]=t
-            t=indexdict[min(indexdict.keys())]
-            pi[currindex]=t
-            U=list(set(U)-set(list([pi[currindex]])))  
-            #update b
+                indexdict[losst(currindex, t, torch.tensor(
+                    rloss), w, B, mu=mu, lamb=lamb, U=list(set(U)-set(list([t])))).item()] = t
+            t = indexdict[min(indexdict.keys())]
+            pi[currindex] = t
+            U = list(set(U)-set(list([pi[currindex]])))
+            # update b
             loss_func, constraint = setup_problem(make_nonconvex=True)
             iterations = 10
             for opt_class in OPTIMIZER_CLASSES:
@@ -904,21 +963,22 @@ for i_episode in range(10,10000):
                                               constraint,
                                               opt_class,
                                               iterations)
-            env_id=t
-            index=t
-            env=envs[index]
+            env_id = t
+            index = t
+            env = envs[index]
             agents[index].train(epochs[index])
-            epochs[index]+=1
-            
+            epochs[index] += 1
+
     else:
-        multitask=False
+        multitask = False
         for index, env in enumerate(envs):
             agents[index].train(epochs[index])
-            epochs[index]+=1
-        
-    rlosscopy=rloss.copy()
+            epochs[index] += 1
+
+    rlosscopy = rloss.copy()
     TotalLossRec_withoutnormalization.append(rlosscopy)
     if TotalLossRec:
-            TotalLossRec.append((rlosscopy-np.array(TotalLossRec_withoutnormalization).mean(axis=0))/(1e-5+np.array(TotalLossRec_withoutnormalization).std(axis=0)))
+        TotalLossRec.append((rlosscopy-np.array(TotalLossRec_withoutnormalization).mean(
+            axis=0))/(1e-5+np.array(TotalLossRec_withoutnormalization).std(axis=0)))
     else:
-            TotalLossRec.append(rlosscopy)   
+        TotalLossRec.append(rlosscopy)

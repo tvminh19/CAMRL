@@ -13,6 +13,9 @@ from torch.autograd import Variable
 from torch.distributions import Categorical
 import torch_ac
 
+envs = []
+# code to populate the envs list
+
 class Single(nn.Module):
 
     def __init__(self, tasks = len(envs) ):
@@ -116,7 +119,7 @@ max_num_steps_per_episode = 10000
 learning_rate = 0.001 
 tasks = len(envs)
 rewardsRec = [[] for _ in range(len(envs))]
-model = Single( )
+model = Single()
 optimizer = optim.Adam(model.parameters(), lr=3e-2)
 
 for rnd in range(10000):
